@@ -552,7 +552,9 @@ def autoconfigure_ppp(device, speed):
 
     PEERS_TEMPLATE = "{device}\n" "{device_speed}\n" "{this_ip}:{dc_ip}\n" "auth\n"
 
-    OPTIONS_TEMPLATE = "debug\n" "ms-dns {this_ip}\n" "proxyarp\n" "ktune\n" "noccp\n"
+    #OPTIONS_TEMPLATE = "debug\n" "ms-dns {this_ip}\n" "proxyarp\n" "ktune\n" "noccp\n"
+    # crtscts for usr_modem
+    OPTIONS_TEMPLATE = "debug\n" "ms-dns {this_ip}\n" "proxyarp\n" "ktune\n" "noccp\n" "crtscts\n"
 
     PAP_SECRETS_TEMPLATE = "# Modded from dreampi.py\n" "# INBOUND connections\n" '*       *       ""      *' "\n"
      
@@ -770,10 +772,13 @@ class Modem(object):
     def reset(self):
         while True:
             try:
-                self.send_command("ATZ0",timeout=3)  # Send reset command
-                time.sleep(1)
-                self.send_command("AT&F0")
-                self.send_command("ATE0W2")  # Don't echo our responses
+                #self.send_command("ATZ0",timeout=3)  # Send reset command
+                #time.sleep(1)
+                #self.send_command("AT&F0")
+                #self.send_command("ATE0W2")  # Don't echo our responses
+                self.send_command("AT&F1") # usr_modem: Factory reset
+                self.send_command("ATE0")  # usr_modem: Don't Echo
+                self.send_command("ATM0")  # usr_modem: Mute Speaker
                 return
             except IOError:
                 self.shake_it_off() # modem isn't responding. Try a harder reset
@@ -787,7 +792,8 @@ class Modem(object):
                 self.reset()
                 self.send_command(b"AT+FCLASS=8")  # Enter voice mode
                 self.send_command(b"AT+VLS=1")  # Go off-hook
-                self.send_command(b"AT+VSM=1,8000")  # 8 bit unsigned PCM
+                #self.send_command(b"AT+VSM=1,8000")  # 8 bit unsigned PCM
+                self.send_command("AT+VSM=129,8000") # usr_modem
                 self.send_command(b"AT+VTX")  # Voice transmission mode
                 logger.info("<LISTENING>")
                 break
@@ -818,7 +824,8 @@ class Modem(object):
         self.reset()
         # When we send ATA we only want to look for CONNECT. Some modems respond OK then CONNECT
         # and that messes everything up
-        self.send_command(b"ATA", ignore_responses=[b"OK"])
+        #self.send_command(b"ATA", ignore_responses=[b"OK"])
+        self.send_command_connect("ATA") # usr_modem
         time.sleep(5)
         logger.info("Call answered!")
         logger.info(subprocess.check_output(["pon", "dreamcast"]).decode())
@@ -899,6 +906,29 @@ class Modem(object):
                             raise IOError("Command returned an error")
                     # logger.info(line[line.find(resp) :].decode())
                     return  # We are done
+
+    # usr_modem
+    def send_command_connect(self, command, timeout=60):
+        final_command = "%s\r\n" % command
+        self._serial.write(final_command)
+        logger.info(final_command)
+
+        start = datetime.now()
+
+        line = ""
+        while True:
+            new_data = self._serial.readline().strip()
+
+            if not new_data:
+                continue
+
+            line = line + new_data
+            if "CONNECT" in line:
+                logger.info(line[line.find("CONNECT"):])
+                return # We are done
+
+            if (datetime.now() - start).total_seconds() > timeout:
+                raise IOError("There was a timeout while waiting for a response from the modem")
 
 
     def send_escape(self):
